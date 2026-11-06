@@ -1,0 +1,13 @@
+{
+  "name": "takeru-xauusd-ai-terminal",
+  "version": "2.0.0",
+  "description": "Standalone FOREXCOM:XAUUSD ICT/SMC AI Trading Terminal with Telegram Bot Alerts",
+  "main": "server.js",
+  "scripts": {
+    "build": "node train.js",
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
