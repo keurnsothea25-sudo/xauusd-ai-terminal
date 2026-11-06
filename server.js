@@ -17,10 +17,12 @@ const {
   FEATURES,
   EXAMPLES_PATH,
   MODEL_PATH,
-  DATA_DIR,
-  MONGODB_URI,
-  DB_NAME
+  DATA_DIR
 } = require('./train.js');
+
+// អានតម្លៃផ្ទាល់ពី Render Environment Variables
+const MONGODB_URI = process.env.MONGODB_URI || '';
+const DB_NAME = process.env.DB_NAME || 'xauusd_ai_terminal';
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
