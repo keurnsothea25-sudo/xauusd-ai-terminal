@@ -119,8 +119,8 @@ function loadTelegramConfig() {
 function saveTelegramConfig(cfg) {
   const current = loadTelegramConfig();
   const updated = {
-    botToken: cfg.botToken !== undefined ? String(cfg.botToken).trim() : current.botToken,
-    chatId: cfg.chatId !== undefined ? String(cfg.chatId).trim() : current.chatId,
+    botToken: cfg.botToken !== undefined && String(cfg.botToken).trim() !== '' ? String(cfg.botToken).trim() : current.botToken,
+    chatId: cfg.chatId !== undefined && String(cfg.chatId).trim() !== '' ? String(cfg.chatId).trim() : current.chatId,
     enabled: cfg.enabled !== undefined ? Boolean(cfg.enabled) : current.enabled,
     minWinProb: cfg.minWinProb !== undefined ? Number(cfg.minWinProb) : current.minWinProb
   };
@@ -162,13 +162,14 @@ async function initMongoAtlas() {
       { upsert: true }
     );
 
-    // 2. Sync Trade Lock State & Win Rate Stats
+    // 2. Sync Trade Lock State & Win Rate Stats (Restoring from Cloud so W/L/BE won't reset)
     const stateCol = mongoDb.collection('app_state');
     const savedState = await stateCol.findOne({ _id: 'trade_state' });
     if (savedState) {
       delete savedState._id;
       const merged = Object.assign(defaultTradeState(), savedState);
       fs.writeFileSync(ACTIVE_TRADE_PATH, JSON.stringify(merged, null, 2), 'utf8');
+      console.log(`[MongoDB Atlas] Restored trade state & stats: ${merged.stats.wins}W - ${merged.stats.losses}L - ${merged.stats.breakevens}BE`);
     } else {
       const localState = loadTradeState();
       await stateCol.updateOne({ _id: 'trade_state' }, { $set: localState }, { upsert: true });
@@ -235,6 +236,7 @@ function httpsRequest(reqUrl, options = {}, postBody = null) {
   });
 }
 
+// Enhanced Multi-Destination Telegram Sender (Supports comma-separated Chat IDs / Channels)
 async function sendTelegramMessage(htmlText, forceSend = false) {
   const cfg = loadTelegramConfig();
   if (!cfg.botToken || !cfg.chatId) {
@@ -244,27 +246,40 @@ async function sendTelegramMessage(htmlText, forceSend = false) {
     return { ok: false, error: 'Telegram alerts are paused' };
   }
 
-  const payload = JSON.stringify({
-    chat_id: cfg.chatId,
-    text: htmlText,
-    parse_mode: 'HTML',
-    disable_web_page_preview: true
-  });
+  // Split multiple chat IDs/channels by comma (,)
+  const chatIdList = String(cfg.chatId)
+    .split(',')
+    .map(id => id.trim())
+    .filter(Boolean);
 
-  try {
-    const apiUrl = `https://api.telegram.org/bot${cfg.botToken}/sendMessage`;
-    const res = await httpsRequest(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(payload)
-      }
-    }, payload);
-    return { ok: true, result: res };
-  } catch (err) {
-    console.error('[Telegram Bot Error]:', err.message);
-    return { ok: false, error: err.message };
+  const apiUrl = `https://api.telegram.org/bot${cfg.botToken}/sendMessage`;
+  const results = [];
+
+  for (const singleChatId of chatIdList) {
+    const payload = JSON.stringify({
+      chat_id: singleChatId,
+      text: htmlText,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true
+    });
+
+    try {
+      const res = await httpsRequest(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload)
+        }
+      }, payload);
+      results.push({ chatId: singleChatId, ok: true, result: res });
+    } catch (err) {
+      console.error(`[Telegram Bot Error for ${singleChatId}]:`, err.message);
+      results.push({ chatId: singleChatId, ok: false, error: err.message });
+    }
   }
+
+  const anySuccess = results.some(r => r.ok);
+  return { ok: anySuccess, results };
 }
 
 function buildProgressBar(prob) {
@@ -282,7 +297,6 @@ function getWinRateSummary(tradeState) {
     ? Number(((s.wins / decisiveCount) * 100).toFixed(1))
     : 0.0;
 
-  // Also read AI model dataset accuracy / win rate
   let aiAccuracy = 91.7;
   let totalAiSetups = 24;
   try {
@@ -306,7 +320,7 @@ function getWinRateSummary(tradeState) {
   };
 }
 
-// Telegram Signal Drop Card (TP1 1:1, TP2 1:2, Full TP3 1:3 + Win Rate)
+// Telegram Signal Drop Card
 function formatTelegramSignalCard(scan, entryTf, htf, tradeState, statusText = 'LIMIT PENDING') {
   const dir = scan.signalDirection === 'WAIT' ? scan.candidateDirection : scan.signalDirection;
   const isBuy = dir === 'BUY';
@@ -345,7 +359,7 @@ function formatTelegramSignalCard(scan, entryTf, htf, tradeState, statusText = '
   ].join('\n');
 }
 
-// Telegram Trade Outcome / Hit TP1, TP2, TP3, SL, or BE Card with Live Win Rate
+// Telegram Trade Outcome / Hit Card
 function formatTelegramHitCard(badgeIcon, hitTitle, lockedTrade, livePrice, tradeState, extraNote = '') {
   const lv = lockedTrade.levels;
   const wr = getWinRateSummary(tradeState);
@@ -1067,7 +1081,7 @@ function updateStatsPercentage(stats) {
   stats.winRate = decisive > 0 ? Number(((stats.wins / decisive) * 100).toFixed(1)) : 0.0;
 }
 
-// Strict Trade Lock Lifecycle Engine + TP1 (1:1), TP2 (1:2), Full TP3 (1:3), SL & BE Telegram Alerts
+// Strict Trade Lock Lifecycle Engine + Telegram Alerts
 async function evaluateTradeLockLifecycle(tradeState, livePrice, latestScan, entryTf, htf) {
   const lockedStatuses = ['LIMIT_PENDING', 'ACTIVE_IN_TRADE', 'TP1_HIT_RUNNING'];
   const tgCfg = loadTelegramConfig();
@@ -1177,7 +1191,6 @@ async function evaluateTradeLockLifecycle(tradeState, livePrice, latestScan, ent
           tradeState.lockedTrade = null;
           return saveTradeState(tradeState);
         } else {
-          // Transition to TP1_HIT_RUNNING & Move SL to Breakeven
           tradeState.status = 'TP1_HIT_RUNNING';
           t.tp1HitAt = new Date().toISOString();
           t.levels.stopLoss = t.levels.entryMid;
