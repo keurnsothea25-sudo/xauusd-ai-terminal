@@ -1,9 +1,19 @@
 const fs = require('fs');
 const path = require('path');
 
+let MongoClient = null;
+try {
+  MongoClient = require('mongodb').MongoClient;
+} catch (e) {
+  MongoClient = null;
+}
+
 const DATA_DIR = path.join(__dirname, 'data');
 const EXAMPLES_PATH = path.join(DATA_DIR, 'examples.json');
 const MODEL_PATH = path.join(DATA_DIR, 'model.json');
+
+const MONGODB_URI = process.env.MONGODB_URI || '';
+const DB_NAME = process.env.MONGODB_DB_NAME || 'xauusd_ai_terminal';
 
 const FEATURES = [
   'htfBias',
@@ -62,27 +72,10 @@ function sigmoid(z) {
   return 1 / (1 + Math.exp(-z));
 }
 
-function trainModel(epochs = 600, learningRate = 0.15, l2Lambda = 0.005) {
-  ensureDataDir();
-
-  let examples = [];
-  if (!fs.existsSync(EXAMPLES_PATH)) {
-    examples = generateSeedExamples();
-    fs.writeFileSync(EXAMPLES_PATH, JSON.stringify(examples, null, 2), 'utf8');
-    console.log(`[train.js] Generated and saved ${examples.length} seed setups to data/examples.json`);
-  } else {
-    try {
-      examples = JSON.parse(fs.readFileSync(EXAMPLES_PATH, 'utf8'));
-    } catch (err) {
-      examples = generateSeedExamples();
-      fs.writeFileSync(EXAMPLES_PATH, JSON.stringify(examples, null, 2), 'utf8');
-    }
-  }
-
+function computeLogisticRegression(examples, epochs = 600, learningRate = 0.15, l2Lambda = 0.005) {
   const weights = {};
   FEATURES.forEach(f => { weights[f] = 0.1; });
   let bias = 0.0;
-
   const n = examples.length || 1;
 
   for (let epoch = 0; epoch < epochs; epoch++) {
@@ -93,7 +86,7 @@ function trainModel(epochs = 600, learningRate = 0.15, l2Lambda = 0.005) {
     for (const ex of examples) {
       let z = bias;
       for (const f of FEATURES) {
-        const val = Math.max(-1, Math.min(1, Number(ex.features[f] || 0)));
+        const val = Math.max(-1, Math.min(1, Number(ex.features?.[f] || 0)));
         z += weights[f] * val;
       }
       const pred = sigmoid(z);
@@ -101,7 +94,7 @@ function trainModel(epochs = 600, learningRate = 0.15, l2Lambda = 0.005) {
       const err = pred - y;
 
       for (const f of FEATURES) {
-        const val = Math.max(-1, Math.min(1, Number(ex.features[f] || 0)));
+        const val = Math.max(-1, Math.min(1, Number(ex.features?.[f] || 0)));
         gradW[f] += err * val;
       }
       gradB += err;
@@ -115,26 +108,30 @@ function trainModel(epochs = 600, learningRate = 0.15, l2Lambda = 0.005) {
     bias = Number(bias.toFixed(6));
   }
 
-  // Evaluate accuracy and loss on training set
   let correct = 0;
   let totalLoss = 0;
+  let winSamples = 0;
   for (const ex of examples) {
     let z = bias;
     for (const f of FEATURES) {
-      z += weights[f] * Number(ex.features[f] || 0);
+      z += weights[f] * Number(ex.features?.[f] || 0);
     }
     const p = sigmoid(z);
     const y = ex.label ? 1 : 0;
+    if (y === 1) winSamples++;
     if ((p >= 0.5 && y === 1) || (p < 0.5 && y === 0)) correct++;
     const clippedP = Math.min(0.999999, Math.max(0.000001, p));
     totalLoss += -(y * Math.log(clippedP) + (1 - y) * Math.log(1 - clippedP));
   }
 
-  const modelData = {
-    version: '1.0.0',
+  return {
+    version: '3.0.0',
     instrument: 'FOREXCOM:XAUUSD',
     epochs,
     sampleCount: examples.length,
+    winSamples,
+    lossSamples: examples.length - winSamples,
+    datasetWinRate: Number(((winSamples / n) * 100).toFixed(1)),
     accuracy: Number(((correct / n) * 100).toFixed(2)),
     loss: Number((totalLoss / n).toFixed(5)),
     trainedAt: new Date().toISOString(),
@@ -142,14 +139,84 @@ function trainModel(epochs = 600, learningRate = 0.15, l2Lambda = 0.005) {
     weights,
     bias
   };
+}
 
+// Train using local JSON files (synchronous fallback & local cache)
+function trainModel(epochs = 600, customExamples = null) {
+  ensureDataDir();
+
+  let examples = customExamples;
+  if (!Array.isArray(examples) || examples.length === 0) {
+    if (!fs.existsSync(EXAMPLES_PATH)) {
+      examples = generateSeedExamples();
+      fs.writeFileSync(EXAMPLES_PATH, JSON.stringify(examples, null, 2), 'utf8');
+    } else {
+      try {
+        examples = JSON.parse(fs.readFileSync(EXAMPLES_PATH, 'utf8'));
+      } catch (err) {
+        examples = generateSeedExamples();
+      }
+    }
+  } else {
+    fs.writeFileSync(EXAMPLES_PATH, JSON.stringify(examples, null, 2), 'utf8');
+  }
+
+  const modelData = computeLogisticRegression(examples, epochs);
   fs.writeFileSync(MODEL_PATH, JSON.stringify(modelData, null, 2), 'utf8');
-  console.log(`[train.js] Logistic Regression trained (${epochs} epochs) | Samples: ${examples.length} | Accuracy: ${modelData.accuracy}% | Loss: ${modelData.loss}`);
+  console.log(`[train.js] Trained Model (${epochs} epochs) | Samples: ${examples.length} | Accuracy: ${modelData.accuracy}%`);
   return modelData;
 }
 
-if (require.main === module) {
-  trainModel(600);
+// Train & Sync directly with MongoDB Atlas if MONGODB_URI is provided
+async function trainModelWithMongo(epochs = 600) {
+  ensureDataDir();
+  if (!MONGODB_URI || !MongoClient) {
+    return trainModel(epochs);
+  }
+
+  const client = new MongoClient(MONGODB_URI, { serverSelectionTimeoutMS: 6000 });
+  try {
+    await client.connect();
+    const db = client.db(DB_NAME);
+    const examplesCol = db.collection('examples');
+    const modelCol = db.collection('model_weights');
+
+    let examples = await examplesCol.find({}).toArray();
+    if (examples.length === 0) {
+      const seeds = generateSeedExamples();
+      await examplesCol.insertMany(seeds);
+      examples = seeds;
+      console.log(`[train.js] Seeded ${seeds.length} setups into MongoDB Atlas.`);
+    }
+
+    const modelData = trainModel(epochs, examples);
+    await modelCol.updateOne(
+      { _id: 'current_model' },
+      { $set: modelData },
+      { upsert: true }
+    );
+    console.log(`[train.js] Synced trained model weights to MongoDB Atlas!`);
+    return modelData;
+  } catch (err) {
+    console.warn(`[train.js] MongoDB connection fallback to local JSON:`, err.message);
+    return trainModel(epochs);
+  } finally {
+    await client.close().catch(() => {});
+  }
 }
 
-module.exports = { trainModel, FEATURES, EXAMPLES_PATH, MODEL_PATH, DATA_DIR };
+if (require.main === module) {
+  trainModelWithMongo(600).catch(console.error);
+}
+
+module.exports = {
+  trainModel,
+  trainModelWithMongo,
+  generateSeedExamples,
+  FEATURES,
+  EXAMPLES_PATH,
+  MODEL_PATH,
+  DATA_DIR,
+  MONGODB_URI,
+  DB_NAME
+};

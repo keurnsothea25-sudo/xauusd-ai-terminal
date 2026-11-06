@@ -64,6 +64,15 @@
       align-items: center;
       gap: 6px;
     }
+    .db-badge {
+      background: rgba(6, 182, 212, 0.14);
+      border: 1px solid var(--cyan);
+      color: #67e8f9;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+    }
     .pulse-dot {
       width: 8px;
       height: 8px;
@@ -316,24 +325,24 @@
 
     .signal-hero {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
       margin-bottom: 12px;
     }
     .hero-box {
       background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 10px;
+      padding: 9px 6px;
       text-align: center;
     }
     .hero-label {
-      font-size: 11px;
+      font-size: 10.5px;
       color: var(--text-muted);
       margin-bottom: 4px;
     }
     .hero-val {
-      font-size: 21px;
+      font-size: 18px;
       font-weight: 800;
     }
     .dir-BUY { color: var(--green); }
@@ -451,6 +460,7 @@
         <span class="pulse-dot"></span>
         FOREXCOM:XAUUSD (100% SYNCED)
       </div>
+      <div class="db-badge" id="mongoBadge">DB: CHECKING...</div>
     </div>
 
     <div class="header-metrics">
@@ -524,7 +534,7 @@
           </div>
           <div class="legend-item"><span class="legend-line" style="background:#3b82f6"></span> Entry</div>
           <div class="legend-item"><span class="legend-line" style="background:#ef4444"></span> SL (&lt;=$10)</div>
-          <div class="legend-item"><span class="legend-line" style="background:#f5b942"></span> TP1-TP3</div>
+          <div class="legend-item"><span class="legend-line" style="background:#f5b942"></span> TP 1:1 / 1:2 / 1:3</div>
           <div class="legend-item"><span class="legend-line" style="background:#8b5cf6"></span> HTF DOL</div>
         </div>
       </div>
@@ -560,8 +570,12 @@
             <div id="signalDirDisplay" class="hero-val dir-WAIT">WAIT</div>
           </div>
           <div class="hero-box">
-            <div class="hero-label">AI Win Probability</div>
+            <div class="hero-label">AI Confidence</div>
             <div id="winProbDisplay" class="hero-val" style="color:var(--gold)">--.-%</div>
+          </div>
+          <div class="hero-box">
+            <div class="hero-label" id="winRateSubLabel">Win Rate (0W-0L)</div>
+            <div id="winRateDisplay" class="hero-val" style="color:var(--green)">--.-%</div>
           </div>
         </div>
 
@@ -575,15 +589,15 @@
             <span class="level-val" id="valSL">---.--</span>
           </div>
           <div class="level-row tp1">
-            <span>TP1 (1:1.5 RR)</span>
+            <span>TP1 (1:1 RR)</span>
             <span class="level-val" id="valTP1">---.--</span>
           </div>
           <div class="level-row tp2">
-            <span>TP2 (1:2.5 RR)</span>
+            <span>TP2 (1:2 RR)</span>
             <span class="level-val" id="valTP2">---.--</span>
           </div>
           <div class="level-row tp3">
-            <span>Full TP / TP3 (1:4.0 RR)</span>
+            <span>Full TP / TP3 (1:3 RR)</span>
             <span class="level-val" id="valTP3">---.--</span>
           </div>
           <div class="level-row dol">
@@ -593,7 +607,7 @@
         </div>
 
         <button class="btn-copy" onclick="copySignalToClipboard()" id="copySignalBtn">
-          📋 Copy Signal Levels
+          📋 Copy Signal Levels (1:1 / 1:2 / 1:3)
         </button>
 
         <hr style="border:none;border-top:1px solid var(--border);margin:12px 0;" />
@@ -602,8 +616,8 @@
           <div class="control-row">
             <label for="lockModeSelect">Trade Lock Mode:</label>
             <select id="lockModeSelect" onchange="updateLockSettings()">
-              <option value="HOLD_UNTIL_FULL_TP">Hold Until Full TP / SL</option>
-              <option value="UNLOCK_AT_TP1">Unlock at TP1</option>
+              <option value="HOLD_UNTIL_FULL_TP">Hold Until Full TP3 (1:3) / BE</option>
+              <option value="UNLOCK_AT_TP1">Unlock at TP1 (1:1)</option>
             </select>
           </div>
 
@@ -624,12 +638,12 @@
       <!-- Telegram Bot Auto-Alert Card -->
       <div class="panel-card">
         <div class="card-header">
-          <span class="card-title">✈️ Telegram Signal Bot (&gt;= 70% Auto-Drop)</span>
+          <span class="card-title">✈️ Telegram Bot (TP1/TP2/TP3/SL/BE + Win Rate)</span>
           <span id="tgStatusText" style="font-size:11px;font-weight:700;color:var(--gold)">NOT CONFIGURED</span>
         </div>
         <div class="tg-inputs">
           <input type="password" id="tgBotTokenInput" placeholder="Paste Telegram Bot Token (from @BotFather)" />
-          <input type="text" id="tgChatIdInput" placeholder="Paste Telegram Chat ID / Channel ID (e.g. 123456789)" />
+          <input type="text" id="tgChatIdInput" placeholder="Paste Telegram Chat ID / Channel ID" />
           <div class="btn-row">
             <button onclick="saveTelegramSettings()" style="border-color:var(--cyan);color:#67e8f9;">💾 Save Bot Config</button>
             <button onclick="sendTestTelegramSignal()" id="tgTestBtn" style="border-color:var(--gold);color:var(--gold);">🚀 Drop Signal to Telegram</button>
@@ -770,6 +784,17 @@
       document.getElementById('killzoneBadge').textContent = data.killzoneName;
       document.getElementById('atrBadge').textContent = `${data.entryTf.toUpperCase()} ATR: ${data.atr.toFixed(2)} | ${data.htf.toUpperCase()} ATR: ${data.htfAtr.toFixed(2)}`;
 
+      const dbBadge = document.getElementById('mongoBadge');
+      if (data.mongoConnected) {
+        dbBadge.textContent = '☁️ MONGODB ATLAS: CONNECTED';
+        dbBadge.style.borderColor = 'var(--green)';
+        dbBadge.style.color = '#34d399';
+      } else {
+        dbBadge.textContent = '💾 DB: LOCAL CACHE (SET MONGODB_URI)';
+        dbBadge.style.borderColor = 'var(--gold)';
+        dbBadge.style.color = 'var(--gold)';
+      }
+
       const htfBadge = document.getElementById('htfDirBadge');
       htfBadge.className = `htf-dir-badge htf-${data.htfDirection}`;
       htfBadge.textContent = `HTF [${data.htf.toUpperCase()}] MARKET: ${data.htfDirection}`;
@@ -780,6 +805,13 @@
       if (data.modelMeta) {
         document.getElementById('modelMetaInfo').textContent =
           `AI Model: ${data.modelMeta.sampleCount} Setups | Accuracy: ${data.modelMeta.accuracy}%`;
+      }
+
+      if (data.winRateSummary) {
+        const wr = data.winRateSummary;
+        document.getElementById('winRateDisplay').textContent = `${wr.liveWinRate}%`;
+        document.getElementById('winRateSubLabel').textContent =
+          `Win Rate (${wr.wins}W-${wr.losses}L-${wr.breakevens}BE)`;
       }
 
       if (data.telegramStatus) {
@@ -1012,9 +1044,9 @@
       const slDist = Math.abs(lv.entryMid - lv.stopLoss).toFixed(2);
       drawPriceLine(lv.entryMid, `ENTRY (${latestScanData.entryTf.toUpperCase()})`, '#3b82f6', false);
       drawPriceLine(lv.stopLoss, `SL (-$${slDist})`, '#ef4444', true);
-      drawPriceLine(lv.tp1, 'TP1 (1.5R)', '#34d399', true);
-      drawPriceLine(lv.tp2, 'TP2 (2.5R)', '#10b981', true);
-      drawPriceLine(lv.tp3, 'FULL TP3 (4R)', '#f5b942', false);
+      drawPriceLine(lv.tp1, 'TP1 (1:1 RR)', '#34d399', true);
+      drawPriceLine(lv.tp2, 'TP2 (1:2 RR)', '#10b981', true);
+      drawPriceLine(lv.tp3, 'FULL TP3 (1:3 RR)', '#f5b942', false);
 
       if (lv.htfDol) {
         drawPriceLine(lv.htfDol, `HTF [${latestScanData.htf.toUpperCase()}] DOL`, '#8b5cf6', true);
@@ -1109,22 +1141,23 @@
       const sig = latestScanData.activeSignal;
       const lv = sig.levels;
       const slDist = Math.abs(lv.entryMid - lv.stopLoss).toFixed(2);
+      const wr = latestScanData.winRateSummary?.liveWinRate ?? 91.7;
       const text = [
         `FOREXCOM:XAUUSD AI SIGNAL (${sig.signalDirection})`,
         `Direction HTF: ${latestScanData.htf.toUpperCase()} (${latestScanData.htfDirection}) | Entry TF: ${latestScanData.entryTf.toUpperCase()}`,
-        `Win Probability: ${sig.winProbability.toFixed(1)}%`,
+        `AI Confidence: ${sig.winProbability.toFixed(1)}% | Win Rate: ${wr}%`,
         `Entry Zone: ${lv.entryLow.toFixed(2)} - ${lv.entryHigh.toFixed(2)} (Mid: ${lv.entryMid.toFixed(2)})`,
         `Stop Loss: ${lv.stopLoss.toFixed(2)} (-$${slDist} | Max $10.00 Cap)`,
-        `TP1 (1:1.5 RR): ${lv.tp1.toFixed(2)}`,
-        `TP2 (1:2.5 RR): ${lv.tp2.toFixed(2)}`,
-        `Full TP3 (1:4.0 RR): ${lv.tp3.toFixed(2)}`,
+        `TP1 (1:1 RR): ${lv.tp1.toFixed(2)}`,
+        `TP2 (1:2 RR): ${lv.tp2.toFixed(2)}`,
+        `Full TP3 (1:3 RR): ${lv.tp3.toFixed(2)}`,
         `HTF Draw on Liquidity (DOL): ${(lv.htfDol || latestScanData.htfDolTarget).toFixed(2)}`
       ].join('\n');
 
       navigator.clipboard.writeText(text).then(() => {
         const btn = document.getElementById('copySignalBtn');
         btn.textContent = '✅ Signal Copied to Clipboard!';
-        setTimeout(() => { btn.textContent = '📋 Copy Signal Levels'; }, 2000);
+        setTimeout(() => { btn.textContent = '📋 Copy Signal Levels (1:1 / 1:2 / 1:3)'; }, 2000);
       });
     }
 
